@@ -85,7 +85,10 @@ entered: { opacity: 1, transform: getScale(1) }
 **What I Learned:**
 - GPU compositing layers — browsers move elements to GPU for animations, but remove them after
 - Subpixel text rendering — text positions can shift by 1px depending on compositing state
-- How to respond to reviewer feedback and correct an incorrect analysis
+- CSS stacking context — any `transform` (even 2D identity) creates a stacking context, which can break drag-and-drop positioning
+- `transform: 'none'` vs `transform: scale(1,1)` — seemingly identical visually but very different in browser rendering model
+- Deliberate decisions in open source are documented in linked PRs — always trace history before changing things
+- How to respond to reviewer feedback, correct wrong analysis, and propose the next direction constructively
 - `mergeSlotProps` merge order in MUI: `additionalProps` → `externalForwardedProps` → `slotProps`
 
 ---
