@@ -93,6 +93,88 @@ entered: { opacity: 1, transform: getScale(1) }
 
 ---
 
+### 3. facebook/react — Fix false hydration mismatch warning with portals
+
+**Issue:** [#12615](https://github.com/facebook/react/issues/12615) — Unexpected warning when hydrating with portal and SSR
+
+**PR:** [#36321](https://github.com/facebook/react/pull/36321)
+
+**Status:** Open / Under Review
+
+**The Problem:**
+When a component returned `null` on the server but rendered `ReactDOM.createPortal()` on the client, React emitted a false hydration mismatch error:
+```
+Hydration failed because the server rendered HTML didn't match the client.
+  <span>
+    <HoverMenu>
++     <div>   ← false positive: this is portal content, not inside span
+```
+The portal's `<div>` renders into a *separate container* and should never be compared against the parent's server HTML.
+
+**Root Cause:**
+`updatePortalComponent` calls `pushHostContainer` to switch to the portal's DOM container, but the hydration state variables (`isHydrating`, `nextHydratableInstance`, `hydrationParentFiber`) were not reset. Portal children then tried to claim hydration instances from the **parent container's** server nodes → false mismatch.
+
+**The Fix:**
+Added two functions to `ReactFiberHydrationContext`:
+- `prepareToHydrateHostPortal` — saves hydration state to a stack and resets it when entering a portal
+- `popHydrationStateAfterPortal` — restores saved state when the portal completes
+
+Called from `updatePortalComponent` (begin work) and the `HostPortal` complete work case respectively. Stack-based so nested portals work correctly.
+
+**Files Changed:**
+- `packages/react-reconciler/src/ReactFiberHydrationContext.js` — added save/restore stack + two new exported functions
+- `packages/react-reconciler/src/ReactFiberBeginWork.js` — call `prepareToHydrateHostPortal` in `updatePortalComponent`
+- `packages/react-reconciler/src/ReactFiberCompleteWork.js` — call `popHydrationStateAfterPortal` in `HostPortal` case
+- `packages/react-dom/src/__tests__/ReactDOMHydrationDiff-test.js` — two regression tests
+
+**What I Learned:**
+- React's hydration system tracks server DOM nodes via module-level cursor variables (`hydrationParentFiber`, `nextHydratableInstance`, `isHydrating`)
+- `pushHostContainer` changes the DOM container context but is completely separate from the hydration cursor — a subtle but critical distinction
+- Portals are excluded from the parent's DOM tree (`appendAllChildren` skips them) but the hydration cursor was NOT being excluded alongside them
+- Save/restore stack pattern is the standard React approach for re-entrant contexts (Suspense uses it too)
+- Always write a failing test first to confirm the bug is real before reading the source
+
+---
+
+### 4. facebook/react — Warn when NaN is passed as an aria-* attribute value
+
+**PR:** [#36340](https://github.com/facebook/react/pull/36340)
+
+**Status:** Open / Under Review
+
+**The Problem:**
+React already warns when a non-aria attribute receives a `NaN` value (in `ReactDOMUnknownPropertyHook`). But aria-* attributes skip that check entirely — they return early before the NaN guard is reached. The result is silent: `<div aria-valuenow={NaN} />` renders `aria-valuenow="NaN"` in the DOM with no warning, which is invalid for every ARIA attribute type and silently breaks assistive technologies.
+
+A common trigger is a computed numeric value derived from state or data that can unexpectedly become `NaN`:
+
+```jsx
+const progress = (loaded / total) * 100;  // NaN if total is 0
+<div role="progressbar" aria-valuenow={progress} />  // silently sets aria-valuenow="NaN"
+```
+
+**Root Cause:**
+`ReactDOMUnknownPropertyHook.validateProperty` returns early for any `aria-*` prop at line 97-99 (delegating to the ARIA hook) — but `ReactDOMInvalidARIAHook.validateProperty` only checked the attribute *name*, never the *value*.
+
+**The Fix:**
+Added a NaN check inside `ReactDOMInvalidARIAHook.validateProperty`. Also threaded the prop value through from `validateProperties` so the inner function can inspect it. The check runs after the attribute name is confirmed valid and correctly cased, mirroring the exact message already used by the unknown property hook:
+
+```
+Warning: Received NaN for the `aria-valuenow` attribute.
+If this is expected, cast the value to a string.
+```
+
+**Files Changed:**
+- `packages/react-dom-bindings/src/shared/ReactDOMInvalidARIAHook.js` — extend `validateProperty` to accept and inspect `value`; add NaN guard for valid aria-* attributes
+- `packages/react-dom/src/__tests__/ReactDOMInvalidARIAHook-test.js` — three new tests: NaN on numeric aria attr, NaN on string aria attr, no false-positive for valid integers
+
+**What I Learned:**
+- React's property validation is split across two hooks: `ReactDOMUnknownPropertyHook` (general DOM) and `ReactDOMInvalidARIAHook` (aria-specific) — each only covers its own domain
+- An early-return for valid attribute names can accidentally exempt those attributes from value-level checks in the other hook
+- The `warnedProperties` map is module-level and de-duplicates warnings across the component tree so the console isn't flooded during re-renders
+- Writing tests alongside the fix is the norm in React: always test the exact warning string including the stack trace suffix
+
+---
+
 ## Repo Structure
 
 ```
