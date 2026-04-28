@@ -175,7 +175,71 @@ If this is expected, cast the value to a string.
 
 ---
 
+### 5. razorpay/blade — Add zIndex as a global design token
+
+**PR:** [#3357](https://github.com/razorpay/blade/pull/3357)
+
+**Status:** Open / Under Review
+
+**The Problem:**
+Blade is Razorpay's design system used across all their products. Design systems rely on "tokens" — named values that components read instead of hardcoding numbers. Blade had tokens for spacing, motion, border radius, and colors. But z-index — which controls which UI layer sits on top of which — was never tokenized.
+
+Instead, all z-index values lived in a utility file `utils/componentZIndices.ts` as plain hardcoded numbers:
+```ts
+// TODO: Move these properly to tokens at some point
+export const componentZIndices = {
+  modal: 1000,
+  drawer: 1001,
+  popover: 1100,
+  tooltip: 1100,
+  // ...
+};
+```
+
+Four component files (Popover, Tooltip, TourPopover) each had their own `// TODO: Tokenize zIndex values` comment flagging this gap. The top-level TODO in the utility file itself said the same thing.
+
+The real consequence: consumers building white-label products on Blade couldn't override z-index values through the theme system. Every other design decision was overridable — except this one.
+
+**The Fix:**
+Created `src/tokens/global/zIndex.ts` following the exact pattern of `spacing.ts` — a typed, documented constant with semantic layer names:
+```ts
+export const zIndex = {
+  hide: -1,      // element hidden behind all other content
+  base: 0,       // normal document flow
+  sticky: 100,   // top nav, bottom nav, bottom sheet handles
+  overlay: 1000, // modal backdrops
+  drawer: 1001,  // side panels
+  dropdown: 1002,// select/dropdown overlays
+  popover: 1100, // tooltips, popovers, tour masks
+};
+```
+
+Added `ZIndex` to `ThemeTokens` so the type system enforces it. Added to `bladeTheme` so it flows through the default theme. Updated `componentZIndices.ts` to reference the token instead of hardcoded numbers — backward-compatible, no existing component imports needed to change.
+
+**Files Changed:**
+- `packages/blade/src/tokens/global/zIndex.ts` — new file, token definition
+- `packages/blade/src/tokens/global/index.ts` — export `ZIndex` type and `zIndex` constant
+- `packages/blade/src/tokens/theme/theme.ts` — add `zIndex: ZIndex` to `ThemeTokens` type
+- `packages/blade/src/tokens/theme/bladeTheme.ts` — add `zIndex` to default theme object
+- `packages/blade/src/utils/componentZIndices.ts` — replace hardcoded numbers with token references
+- `Popover.web.tsx`, `Popover.native.tsx`, `TourPopover.web.tsx`, `Tooltip.native.tsx` — remove resolved TODO comments
+- `.changeset/swift-tokens-rise.md` — changeset entry (required by repo)
+
+**What I Learned:**
+- **Design token architecture** — tokens are the same "single source of truth" pattern as environment variables in backend config. Change one value, every consumer updates.
+- **z-index stacking in CSS** — elements sit on a Z-axis. Higher number = closer to the user. You need coordinated values across the whole system or layers conflict. The gaps between values (100, 1000, 1001, 1002, 1100) are intentional — room to insert future layers without renumbering everything.
+- **`ThemeTokens` as a TypeScript contract** — adding a field to the type forces every custom theme to declare that field. The type system becomes the documentation.
+- **Backward-compatibility bridge pattern** — keeping `componentZIndices.ts` as a thin adapter meant 20+ existing component files needed zero changes. Only the internals changed.
+- **Changeset workflow** — Blade uses `@changesets/cli` to track what changed for release notes. Every PR that touches a published package needs a `.changeset/*.md` file declaring the semver bump and description.
+- **How to read a large codebase quickly** — grep for TODO comments, then trace the import chain from that file upward to understand where values should live.
+
+---
+
 ## Repo Structure
+
+```
+contributions/     # detailed notes per contribution
+```
 
 ```
 contributions/     # detailed notes per contribution
