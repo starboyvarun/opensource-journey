@@ -235,6 +235,49 @@ Added `ZIndex` to `ThemeTokens` so the type system enforces it. Added to `bladeT
 
 ---
 
+### 6. razorpay/blade — Use existing border.radius.large and motion.easing.linear tokens
+
+**PR:** [#3360](https://github.com/razorpay/blade/pull/3360)
+
+**Status:** Open / Under Review
+
+**The Problem:**
+Two components had `// TODO` comments pointing at missing tokens — but the tokens already existed and were just never wired up.
+
+**BottomSheet** had this for its rounded top corners:
+```ts
+// TODO: we do not have 16px radius token
+borderTopLeftRadius: makeSpace(theme.spacing[5]),
+```
+`spacing[5]` is 20px, not 16px. The developer used it as a workaround. Meanwhile `theme.border.radius.large` was sitting in `border.ts` with a value of exactly 16. Two separate codepaths for the same value — and one was wrong.
+
+**ProgressBar** had this for its indeterminate animation easing:
+```ts
+const easing = 'linear'; // TODO: Add this in motion tokens
+```
+`theme.motion.easing.linear` (`makeBezier(0,0,0,0)`) had existed in the motion token file all along. The ProgressBar just never plumbed it through — it passed the raw string instead of reading from the design system.
+
+**The Fix:**
+- BottomSheet: Replace `makeSpace(theme.spacing[5])` with `makeSpace(theme.border.radius.large)` in both `BottomSheet.native.tsx` and `getBottomSheetGrabHandleStyles.ts`. Remove the TODO comments.
+- ProgressBar: Add `motionEasing` to the styled-component's `Pick<ProgressBarFilledProps, ...>` type so it can receive the prop. Replace `const easing = 'linear'` with `const easing = castWebType(getIn(theme.motion, motionEasing))`. Pass `motionEasing={motionEasing}` in the JSX.
+
+No visual changes — both values resolve to the same output. But now the components are controlled by the design system instead of hardcoded strings.
+
+**Files Changed:**
+- `packages/blade/src/components/BottomSheet/BottomSheet.native.tsx` — correct radius token, remove TODO
+- `packages/blade/src/components/BottomSheet/getBottomSheetGrabHandleStyles.ts` — same
+- `packages/blade/src/components/ProgressBar/ProgressBarFilled.web.tsx` — thread motionEasing through styled-component, read from token
+- `.changeset/warm-tokens-land.md` — changeset entry
+
+**What I Learned:**
+- **Searching for TODOs before writing new code** — the fastest way to find real bugs in a design system is `grep -r "TODO" --include="*.ts"`. Most TODO comments are breadcrumbs left by the original author pointing at exactly what needs to be fixed.
+- **`styled-components` TypeScript generics** — `styled(Box)<Pick<Props, 'someProp'>>` — you must explicitly list every prop in the `Pick` that the style function needs to receive. The prop doesn't exist in the template literal scope otherwise.
+- **`getIn(theme.motion, motionEasing)`** — Blade uses dot-path strings like `'motion.duration.xquick'` as prop values, then resolves them at runtime with `getIn`. The pattern decouples component logic from the token structure — you pass the path, not the value.
+- **`castWebType()`** — a type-narrowing helper that tells TypeScript the return type is the web variant (string) rather than the platform-agnostic union. Required because `getIn` returns a general type.
+- **Wrong workaround compounds over time** — `spacing[5]` happened to equal 20px but was semantically wrong. If the spacing scale ever changed, the radius would silently change too. Using the correct token by name insulates the component from unrelated scale changes.
+
+---
+
 ## Repo Structure
 
 ```
