@@ -278,6 +278,57 @@ No visual changes — both values resolve to the same output. But now the compon
 
 ---
 
+### 7. razorpay/blade — Fix FormLabel double announcement for screen readers
+
+**PR:** [#3366](https://github.com/razorpay/blade/pull/3366)
+
+**Status:** Open / Under Review
+
+**The Problem:**
+`FormLabel` is the label component used across every input in Blade — TextInput, Select, DatePicker, Checkbox, and so on. When `necessityIndicator="required"` or `"optional"` is set, the component renders two things:
+
+1. A `VisuallyHidden` node containing the text "required" or "optional" — invisible to sighted users but read by screen readers.
+2. A visible indicator (`*` for required, `(optional)` for optional) — sighted users see this, but screen readers also read it.
+
+Since both exist in the DOM, screen readers announced both. NVDA/VoiceOver said **"Email required asterisk"** instead of **"Email required"**. For optional fields: **"Email optional open paren optional close paren"** instead of just **"Email optional"**. The extra words are confusing noise for assistive technology users.
+
+The TODO comment in the source code had been sitting there since the component was first built:
+```tsx
+{/* TODO: Hide from screen readers to prevent double announcement */}
+{necessityLabel}
+```
+
+**The Fix:**
+Wrap the visible `necessityLabel` in `makeAccessible({ hidden: true })`. Blade already ships a cross-platform `makeAccessible` utility used throughout the Form folder — this follows the exact same pattern as `SelectorGroupField` and `SelectorInput`.
+
+On web, `makeAccessible({ hidden: true })` produces `aria-hidden="true"`. On React Native it produces `accessibilityElementsHidden={true}` + `importantForAccessibility="no-hide-descendants"`. Both platforms: the visible indicator is skipped by assistive technology while remaining visible to sighted users.
+
+```tsx
+// Before
+{/* TODO: Hide from screen readers to prevent double announcement */}
+{necessityLabel}
+
+// After
+{necessityLabel ? (
+  <BaseBox {...makeAccessible({ hidden: true })}>{necessityLabel}</BaseBox>
+) : null}
+```
+
+No visual change. One import added. One TODO resolved.
+
+**Files Changed:**
+- `packages/blade/src/components/Form/FormLabel.tsx` — import `makeAccessible`, wrap `necessityLabel` in aria-hidden container
+- `.changeset/calm-labels-speak.md` — changeset entry
+
+**What I Learned:**
+- **Double announcement pattern** — in any UI that shows both a visible indicator AND has hidden text for screen readers, the visible element must be marked `aria-hidden`. Without it, AT users get redundant information which breaks the listening flow.
+- **`aria-hidden` does not remove from DOM** — it tells the accessibility tree to skip the element during reading. The element still renders, still takes up space, still looks the same. Only screen readers are affected.
+- **`makeAccessible({ hidden: true })` is cross-platform** — on web → `aria-hidden`, on iOS → `accessibilityElementsHidden`, on Android → `importantForAccessibility`. One call handles three targets.
+- **How to find well-scoped accessibility bugs** — grep for `// TODO` in component source, especially in UI primitives used by many other components. A fix to `FormLabel` fixes the accessibility of every form field in the design system in one PR.
+- **`VisuallyHidden` is the inverse of `aria-hidden`** — `VisuallyHidden` renders text that is visually hidden but announced by AT. `aria-hidden` renders content that is visually visible but skipped by AT. You use them together: one for the semantic text, one to silence the decorative duplicate.
+
+---
+
 ## Repo Structure
 
 ```
