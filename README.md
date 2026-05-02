@@ -12,7 +12,7 @@ Tracking my contributions to open source projects — what I worked on, why, wha
 
 **PR:** [#48326](https://github.com/mui/material-ui/pull/48326)
 
-**Status:** Open / Under Review
+**Status:** Open / Changes Requested — `mj12albert` asked for tests and docs, responded with explanation
 
 **The Problem:**
 Developers using the `Accordion` component had to manually assign `id` and `aria-controls` props on `AccordionSummary` for screen readers to work correctly:
@@ -59,7 +59,7 @@ User-provided `id`/`aria-controls` still override auto-generated ones (fully bac
 
 **PR:** [#48329](https://github.com/mui/material-ui/pull/48329)
 
-**Status:** Open / Under Review
+**Status:** Open / Commented by `mj12albert`, awaiting re-review
 
 **The Problem:**
 When you open a MUI Menu and hover over a MenuItem for the first time, the text jumps ~1px. Most visible on Windows with 150% display scaling.
@@ -326,6 +326,52 @@ No visual change. One import added. One TODO resolved.
 - **`makeAccessible({ hidden: true })` is cross-platform** — on web → `aria-hidden`, on iOS → `accessibilityElementsHidden`, on Android → `importantForAccessibility`. One call handles three targets.
 - **How to find well-scoped accessibility bugs** — grep for `// TODO` in component source, especially in UI primitives used by many other components. A fix to `FormLabel` fixes the accessibility of every form field in the design system in one PR.
 - **`VisuallyHidden` is the inverse of `aria-hidden`** — `VisuallyHidden` renders text that is visually hidden but announced by AT. `aria-hidden` renders content that is visually visible but skipped by AT. You use them together: one for the semantic text, one to silence the decorative duplicate.
+
+---
+
+### 8. razorpay/blade — Add headingLevel prop to Accordion for correct aria-level
+
+**PR:** [#3367](https://github.com/razorpay/blade/pull/3367)
+
+**Status:** Open / Under Review
+
+**The Problem:**
+Every `AccordionItem` trigger in Blade renders inside a heading wrapper. The heading level was hardcoded to `3` with a comment acknowledging the problem:
+
+```tsx
+// a11y guidelines suggest having an apt heading surround a button but heading level is hardcoded here
+{...makeAccessible({ role: 'heading', level: 3 })}
+```
+
+This is a real accessibility bug. Screen readers like NVDA and VoiceOver allow users to navigate a page by heading levels — jumping from h1 → h2 → h3 to understand page structure. When an Accordion lives inside an `<h1>` section, its items announce as h3, creating a skipped level (h1 → h3). When it lives inside an `<h4>` section, the items announce as h3 which is *higher* in hierarchy than the parent, completely breaking the document outline.
+
+The WAI-ARIA Accordion pattern explicitly states: "The heading element has a meaningful heading level relative to the context of the document."
+
+**The Fix:**
+Added `headingLevel?: 1 | 2 | 3 | 4 | 5 | 6` to `AccordionProps` (defaults to `3` so nothing breaks). The value flows from the root `Accordion` component through `AccordionContext` down to `AccordionButton.web.tsx` which uses it instead of the hardcoded `3`.
+
+```tsx
+// Before — always h3, no matter where it lives
+<Accordion>...</Accordion>
+
+// After — consumer can match the document hierarchy
+<Accordion headingLevel={2}>...</Accordion>
+<Accordion headingLevel={4}>...</Accordion>
+```
+
+**Files Changed:**
+- `Accordion/types.ts` — add `headingLevel?: 1 | 2 | 3 | 4 | 5 | 6` to `AccordionProps` with JSDoc
+- `Accordion/AccordionContext.tsx` — add `headingLevel` to `AccordionContextState` type
+- `Accordion/Accordion.tsx` — destructure `headingLevel = 3`, include in context value and `useMemo` deps
+- `Accordion/AccordionButton.web.tsx` — read `headingLevel` from context, use instead of hardcoded `3`
+- `.changeset/wise-heading-flows.md` — changeset (marked as `minor` because it's a new prop)
+
+**What I Learned:**
+- **Document outline / heading hierarchy** — screen reader users navigate pages by jumping between headings, like a table of contents. Skipped or inverted heading levels (h1 → h3, or h3 inside h4) break this navigation. The heading level must match the document's section depth, not a hardcoded number.
+- **`aria-level` attribute** — when an element has `role="heading"`, you must also specify `aria-level` (1–6) to tell AT what depth it is. Without it, AT defaults to level 2. The WAI-ARIA spec doesn't infer the level from document structure — you have to be explicit.
+- **React Context as a prop relay** — instead of threading a prop through every intermediate component manually, the `headingLevel` is set once at the `Accordion` root and read directly by `AccordionButton`. This is exactly what React Context is for: avoiding prop-drilling through components that don't need the value themselves.
+- **`useMemo` dependency arrays** — after adding `headingLevel` to the context value object inside `useMemo`, it also needs to be in the dependency array. If it weren't, the memoized value would always be the initial `headingLevel` even after it changed.
+- **`minor` vs `patch` in changesets** — adding a new optional prop is a `minor` semver bump (new capability without breaking change), not `patch` (bug fix). Pure bug fixes that don't add/remove API surface are `patch`.
 
 ---
 
