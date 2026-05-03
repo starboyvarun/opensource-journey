@@ -375,6 +375,64 @@ Added `headingLevel?: 1 | 2 | 3 | 4 | 5 | 6` to `AccordionProps` (defaults to `3
 
 ---
 
+### 9. razorpay/blade — Add prefers-reduced-motion support across the entire design system
+
+**PR:** [#3368](https://github.com/razorpay/blade/pull/3368)
+
+**Status:** Open / Under Review
+
+**The Problem:**
+Blade had zero support for `prefers-reduced-motion`. This is an OS-level accessibility setting — macOS, iOS, Windows, and Android all let users enable "Reduce Motion" to minimize animations. When set, the browser emits the CSS media query `prefers-reduced-motion: reduce`, and applications are expected to honor it.
+
+Users who rely on this setting include people with vestibular disorders (where animation triggers dizziness and nausea), epilepsy (flashing animations can trigger seizures), and motion sensitivity. For these users, using a Blade-based product is physically harmful.
+
+Searching the entire codebase returned **exactly one match** for `prefers-reduced-motion` — a JSDoc comment in `BaseMotion.tsx` that claimed the component "handles reduced motion" but had zero implementation. Every animation — entrance/exit transitions, scale effects, stagger sequences, interactive hover states — ran at full speed regardless.
+
+This is a WCAG 2.1 Success Criterion 2.3.3 violation.
+
+**The Fix:**
+Two-part solution that required understanding the full animation architecture:
+
+**Part 1 — `BladeProvider.web.tsx` (the elegant part)**
+
+framer-motion v11 ships `<MotionConfig reducedMotion="user">`. When you wrap components with it, framer-motion reads the OS `prefers-reduced-motion` setting and sets all animation durations to 0 when it's enabled. `BladeProvider` is already the root provider for all Blade system-wide configuration (theme, color scheme, floating-ui, drawer stacks). Adding `MotionConfig` there means every component in the entire design system that uses framer-motion — `BaseMotion`, `Scale`, `Stagger`, `AnimateInteractions` — automatically respects reduced motion with **zero changes to any individual component**. One import, one wrapper.
+
+```tsx
+<MotionConfig reducedMotion="user">
+  <DrawerStackProvider>
+    <BottomSheetStackProvider>{children}</BottomSheetStackProvider>
+  </DrawerStackProvider>
+</MotionConfig>
+```
+
+**Part 2 — `useReducedMotion` hook (for consumers and CSS animations)**
+
+CSS transitions in styled-components (Toast, Modal backdrop) are not controlled by `MotionConfig`. For those, and for Blade consumers building custom components, I created a `useReducedMotion()` utility hook that reads `window.matchMedia('(prefers-reduced-motion: reduce)')` directly and subscribes to OS-level changes (so it reacts in real-time without a page reload).
+
+```tsx
+const prefersReducedMotion = useReducedMotion();
+
+<Box transitionDuration={prefersReducedMotion ? 'duration.2xquick' : 'duration.moderate'} />
+```
+
+Exported from `~utils` as part of the public Blade API.
+
+**Files Changed:**
+- `BladeProvider.web.tsx` — import `MotionConfig`, wrap children in `<MotionConfig reducedMotion="user">`
+- `utils/useReducedMotion.ts` — new hook, JSDoc, OS change subscription via `addEventListener`
+- `utils/index.ts` — export the new hook
+
+**What I Learned:**
+- **`prefers-reduced-motion` media query** — an OS-level signal, not just a CSS feature. Users set it in System Settings. The browser exposes it as both a CSS media query and a JavaScript `window.matchMedia` API. Applications are expected to honor it automatically.
+- **framer-motion `MotionConfig`** — a provider component that configures default behavior for all framer-motion animations inside it. `reducedMotion="user"` makes it read the OS preference dynamically. `reducedMotion="always"` disables everything (useful for testing). `reducedMotion="never"` forces animations regardless of user preference.
+- **Provider-level vs component-level fixes** — the architectural insight here is that fixing it in the provider means every component gets it for free, vs patching individual components. This is the same reason `ThemeProvider` exists: set once at the top, consume anywhere below.
+- **WCAG 2.1 SC 2.3.3** — "Animation from Interactions: Motion animation triggered by interaction can be disabled, unless the animation is essential to the functionality or the information being conveyed." This is a Level AAA criterion. SC 2.3.1 (Three Flashes) is Level A.
+- **`MediaQueryList.addEventListener('change', ...)`** — the correct way to subscribe to media query changes in modern browsers. The older `addListener` API is deprecated. The event fires immediately when the user changes their OS setting, so the UI reacts without a page reload.
+- **`window.matchMedia` in SSR** — SSR environments (Next.js, Remix) don't have `window`. The hook initializes with `false` on the server and subscribes on the client via `useEffect`, which is the correct SSR-safe pattern.
+- **Why this is different from other accessibility fixes** — most a11y fixes are about labeling (aria-label, aria-hidden, aria-describedby). Reduced motion is about behavior: the UI must change how it acts based on the user's physical needs. It requires understanding both the OS accessibility model and the animation framework's internals.
+
+---
+
 ## Repo Structure
 
 ```
